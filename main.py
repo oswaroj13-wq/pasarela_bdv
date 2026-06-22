@@ -1,44 +1,39 @@
 from fastapi import FastAPI, Form, HTTPException, status
-from parser import parsear_correo_bdv
+from parser import parsear_correo_bnc
 from database import inicializar_bd, obtener_conexion
 from bcv import obtener_tasa_bcv
 import sqlite3
 
 app = FastAPI(
-    title="Pasarela de Pagos BDV & POS SaaS",
-    description="Sistema automatizado de conciliación bancaria y punto de venta multi-moneda.",
+    title="Pasarela de Pagos BNC & POS SaaS",
+    description="Sistema automatizado de conciliación bancaria para el BNC y punto de venta multi-moneda.",
     version="1.0.0"
 )
 
-# Al arrancar la API en la nube, creamos el archivo de la base de datos automáticamente
 @app.on_event("startup")
 def startup_event():
     inicializar_bd()
 
-# --- RUTA RAÍZ (BIENVENIDA) ---
 @app.get("/", summary="Página de inicio del sistema")
 async def inicio():
-    """
-    Ruta principal que elimina el error 'Not Found' en producción.
-    """
     return {
-        "sistema": "Pasarela de Pagos Automática BDV & POS SaaS",
+        "sistema": "Pasarela de Pagos Automática BNC & POS SaaS",
         "estado": "Online/Producción",
         "servidor": "Render Cloud",
         "ingeniero": "Oswar",
         "mensaje": "Bienvenido. Ingresa a /docs para interactuar con el panel de la API."
     }
 
-# --- MÓDULO FINANCIERO (CONCILIACIÓN) ---
 @app.post("/webhook-banco", summary="Recibe y almacena el pago en la Base de Datos")
 async def recibir_pago(
     subject: str = Form(...), 
     body_plain: str = Form(..., alias="body-plain")
 ):
-    if "pago movil" not in subject.lower():
-        return {"status": "ignored", "reason": "No es una notificación de pago móvil"}
+    subject_lower = subject.lower()
+    if "pago movil" not in subject_lower and "bnc" not in subject_lower:
+        return {"status": "ignored", "reason": "No es una notificación de pago móvil o BNC"}
     
-    resultado = parsear_correo_bdv(body_plain)
+    resultado = parsear_correo_bnc(body_plain)
     
     if resultado["status"] == "success":
         ref = resultado["referencia"]
@@ -53,7 +48,7 @@ async def recibir_pago(
                 (ref, monto, tel)
             )
             conn.commit()
-            print(f"\n[BD SQLITE] ¡Pago guardado en disco! Ref: {ref}")
+            print(f"\n[BD SQLITE] ¡Pago BNC guardado en disco! Ref: {ref}")
         except sqlite3.IntegrityError:
             print(f"\n[AVISO] Intento de registrar referencia duplicada: {ref}")
         finally:
@@ -100,7 +95,6 @@ async def verificar_pago(referencia: str, monto_cliente: float):
         "message": "El pago ha sido validado en base de datos. ¡Procesar orden!"
     }
 
-# --- MÓDULO CAMBIARIO (TASACIÓN) ---
 @app.get("/sistema/actualizar-tasa", summary="Sincroniza la tasa oficial con el BCV")
 async def sincronizar_tasa():
     tasa_actual = obtener_tasa_bcv()
@@ -127,7 +121,6 @@ async def sincronizar_tasa():
         "mensaje": "Tasa oficial sincronizada y guardada en disco."
     }
 
-# --- MÓDULO COMERCIAL (INVENTARIO Y POS) ---
 @app.post("/inventario/agregar", summary="Registra un artículo fijando su costo en dólares")
 async def agregar_producto(codigo: str, nombre: str, costo_usd: float, margen_ganancia: float, stock: int):
     conn = obtener_conexion()
@@ -222,7 +215,7 @@ async def procesar_venta(codigo_barras: str, cantidad_a_vender: int, metodo_pago
     cursor.execute("UPDATE productos SET stock = ? WHERE codigo_barras = ?", (nuevo_stock, codigo_barras))
     
     cursor.execute("""
-        INSERT INTO ventas (codigo_producto, cantidad, total_usd, total_ves, metodo_pago, referencia_pago)
+        INSERT INTO ventas (codigo_producto, quantity, total_usd, total_ves, metodo_pago, referencia_pago)
         VALUES (?, ?, ?, ?, ?, ?)
     """, (codigo_barras, cantidad_a_vender, metodo_pago.upper(), referencia))
     
